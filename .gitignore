@@ -1,1 +1,18 @@
-__pycache__
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+myenv/
+venv/
+
+# Data files (optional)
+data/*.xlsx
+
+# Models
+*.zip
+*.pkl
+
+# OS
+.DS_Store
+Thumbs.db
