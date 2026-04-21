@@ -243,7 +243,7 @@ class DynamicPricingEnv(gym.Env):
         cost = landed_cost * realized_units
         profit = revenue - cost
 
-        reward = profit
+        reward = profit / 100.0
         if margin < 0:
             reward -= abs(margin) * self.config.margin_penalty * max(realized_units, 1.0)
         reward -= self.config.inventory_penalty * realized_units
