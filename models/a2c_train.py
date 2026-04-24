@@ -1,6 +1,6 @@
 from env.dynamic_pricing_env import DynamicPricingEnv, EnvConfig
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3 import A2C
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.callbacks import EvalCallback
 
 # ============================
@@ -12,71 +12,81 @@ def make_env():
         data_path="data/dynamic_pricing.csv.xlsx",
         config=EnvConfig(
             max_steps=200,
-            episode_mode="random",   # 🔥 important
+            episode_mode="random",
             action_mode="multiplier",
             random_seed=42
         )
     )
 
 # ============================
-# VECTORIZED ENV (FASTER TRAINING)
+# TRAIN ENV (NORMALIZED)
 # ============================
 
-env = DummyVecEnv([make_env for _ in range(4)])   # 🔥 4 parallel envs
+env = DummyVecEnv([make_env for _ in range(4)])
+env = VecNormalize(env, norm_obs=True, norm_reward=True)
 
 # ============================
-# EVALUATION ENV
+# EVAL ENV (IMPORTANT)
 # ============================
 
 eval_env = DummyVecEnv([make_env])
+eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False)
+
+# 🔥 CRITICAL: sync stats
+eval_env.obs_rms = env.obs_rms
+
+# ============================
+# CALLBACK
+# ============================
 
 eval_callback = EvalCallback(
     eval_env,
-    best_model_save_path="./logs/",
-    log_path="./logs/",
+    best_model_save_path="./logs_a2c/",
+    log_path="./logs_a2c/",
     eval_freq=10000,
     deterministic=True,
     render=False
 )
 
 # ============================
-# POLICY NETWORK (DEEPER)
+# POLICY
 # ============================
 
 policy_kwargs = dict(net_arch=[256, 256])
 
 # ============================
-# PPO MODEL (IMPROVED)
+# A2C MODEL
 # ============================
 
-model = PPO(
+model = A2C(
     "MlpPolicy",
     env,
     verbose=1,
-    learning_rate=1e-4,      # 🔽 better convergence
-    n_steps=2048,            # 🔼 stability
-    batch_size=128,
-    gamma=0.995,             # 🔼 long-term rewards
+
+    learning_rate=7e-4,
+    n_steps=5,
+    gamma=0.99,
     gae_lambda=0.95,
-    clip_range=0.2,
-    ent_coef=0.01,           # 🔥 exploration
+    ent_coef=0.01,
     vf_coef=0.5,
+
     policy_kwargs=policy_kwargs,
 )
 
 # ============================
-# TRAIN MODEL
+# TRAIN
 # ============================
 
 model.learn(
-    total_timesteps=800000,   # 🔥 increased training
+    total_timesteps=800000,
     callback=eval_callback
 )
 
 # ============================
-# SAVE MODEL
+# SAVE MODEL + NORMALIZATION
 # ============================
 
-model.save("ppo_dynamic_pricing_improved")
+model.save("a2c_dynamic_pricing")
+env.save("a2c_vecnormalize.pkl")   # 🔥 IMPORTANT
 
-print("✅ Improved PPO training complete!")
+print("✅ A2C training complete!")

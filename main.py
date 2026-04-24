@@ -5,7 +5,7 @@ import pandas as pd
 env = DynamicPricingEnv(
     data_path="data/dynamic_pricing.csv.xlsx",
     config=EnvConfig(
-        max_steps=1000,
+        max_steps=2000,
         episode_mode="random",   # 👈 enables unlimited sampling
         action_mode="multiplier",
         random_seed=42
@@ -14,7 +14,7 @@ env = DynamicPricingEnv(
 
 results = []
 
-num_episodes = 50   # 👈 change this to control total data
+num_episodes = 200   # 👈 change this to control total data
 
 for ep in range(num_episodes):
     obs, info = env.reset()
