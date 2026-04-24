@@ -16,3 +16,6 @@ data/*.xlsx
 # OS
 .DS_Store
 Thumbs.db
+
+*.csv
+results/
