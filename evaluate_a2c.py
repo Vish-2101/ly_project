@@ -20,7 +20,7 @@ def make_env():
 env = DummyVecEnv([make_env])
 
 # 🔥 LOAD CORRECT NORMALIZATION
-env = VecNormalize.load("ppo_vecnormalize.pkl", env)
+env = VecNormalize.load("a2c_vecnormalize.pkl", env)
 
 env.training = False
 env.norm_reward = False
@@ -29,8 +29,8 @@ env.norm_reward = False
 # LOAD MODEL
 # ============================
 
-# model = A2C.load("a2c_dynamic_pricing")
-model = PPO.load("ppo_dynamic_pricing_improved")
+model = A2C.load("a2c_dynamic_pricing")
+# model = PPO.load("ppo_dynamic_pricing_improved")
 # model = SAC.load("sac_dynamic_pricing")
 
 # ============================
@@ -61,6 +61,6 @@ for ep in range(num_episodes):
 # ============================
 
 df = pd.DataFrame(all_results)
-df.to_csv("ppo_rl_simulation_output.csv", index=False)
+df.to_csv("a2c_rl_simulation_output.csv", index=False)
 
 print("✅ RL simulation saved!")

@@ -9,7 +9,7 @@ from stable_baselines3.common.callbacks import EvalCallback
 
 def make_env():
     return DynamicPricingEnv(
-        data_path="data/dynamic_pricing.csv.xlsx",
+        data_path="data/dynamic_pricing_noisy.xlsx",
         config=EnvConfig(
             max_steps=200,
             episode_mode="random",
