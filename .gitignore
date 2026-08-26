@@ -2,20 +2,26 @@
 __pycache__/
 *.pyc
 
-# Virtual env
-myenv/
+# Virtual environments
+.venv/
 venv/
+myenv/
 
-# Data files (optional)
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
 data/*.xlsx
 
 # Models
 *.zip
 *.pkl
 
+# Generated outputs
+*.csv
+results/
+*.npz
+
 # OS
 .DS_Store
 Thumbs.db
-
-*.csv
-results/
