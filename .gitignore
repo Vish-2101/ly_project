@@ -24,4 +24,4 @@ results/
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.db*.csv 
