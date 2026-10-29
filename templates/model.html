@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ name }} – Live Dynamic Pricing</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1a1d23;--mut:#6b7280;--line:#e5e7eb;--acc:#2563eb;--good:#16a34a;--bad:#dc2626;--warn:#b45309;--warnbg:#fef3c7}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e7e9ee;--mut:#9aa3b2;--line:#262b36;--acc:#60a5fa;--good:#4ade80;--bad:#f87171;--warn:#fbbf24;--warnbg:#3a2c0a}}
+*{box-sizing:border-box}body{margin:0;font:15px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:8px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
+header h1{font-size:17px;margin:0 16px 0 0}
+nav a{padding:6px 14px;border-radius:8px;text-decoration:none;color:var(--mut);font-weight:600}
+nav a.on{background:var(--acc);color:#fff}
+.live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--mut)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--good);animation:p 1.2s infinite}.dot.off{background:var(--mut);animation:none}
+@keyframes p{50%{opacity:.3}}
+main{max-width:1100px;margin:0 auto;padding:18px}
+.banner{background:var(--warnbg);color:var(--warn);padding:10px 14px;border-radius:10px;margin-bottom:14px;font-weight:600}
+.banner small{display:block;font-weight:400;opacity:.85}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+.k{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}.v{font-size:26px;font-weight:700;margin-top:2px}
+.v small{font-size:13px;color:var(--mut);font-weight:500}
+canvas{width:100%;height:260px;display:block}
+.row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
+select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:inherit}
+.legend span{margin-right:14px;color:var(--mut);font-size:13px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13.5px}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child,th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3){text-align:left}
+th{color:var(--mut);font-weight:600;font-size:12px}tbody tr:first-child{background:color-mix(in srgb,var(--acc) 10%,transparent)}
+.pos{color:var(--good)}.neg{color:var(--bad)}
+</style></head><body>
+<header>
+  <h1>Dynamic Pricing · Live</h1>
+  <nav>{% for k,m in models.items() %}<a href="/{{k}}" class="{{'on' if k==key}}">{{m.name}}</a>{% endfor %}</nav>
+  <div class="live"><span class="dot" id="dot"></span><span id="status">connecting…</span></div>
+</header>
+<main>
+{% if mode=='unavailable' %}
+<div class="banner">MODEL UNAVAILABLE — this dashboard only serves predictions from the trained {{name}} model.
+<small>Train the model and restart the app. Reason: {{reason}}</small></div>
+{% endif %}
+<div class="grid">
+  <div class="card"><div class="k">Recommended price</div><div class="v" id="price">–</div><small id="drug" class="k"></small></div>
+  <div class="card"><div class="k">Multiplier</div><div class="v" id="mult">–</div></div>
+  <div class="card"><div class="k">Average price</div><div class="v" id="average">–</div></div>
+  <div class="card"><div class="k">Last profit</div><div class="v" id="profit">–</div></div>
+  <div class="card"><div class="k">Cumulative profit</div><div class="v" id="cum">–</div><small class="k" id="avg"></small></div>
+</div>
+<div class="card" style="margin-bottom:14px">
+  <div class="row">
+    <div>
+      <label for="item">Product </label>
+      <select id="item"><option>Loading…</option></select>
+    </div>
+    <div class="legend"><span><i style="background:#2563eb"></i>Model price</span><span><i style="background:#16a34a"></i>Moving average</span></div>
+  <button id="pause">Pause</button></div>
+  <canvas id="chart"></canvas>
+  <div class="row"><label for="timeline">History</label><input id="timeline" type="range" min="1" value="1" step="1" style="flex:1"><button id="liveView">Live</button></div>
+</div>
+<div class="card tw"><table><thead><tr><th>Date</th><th>Drug</th><th>Category</th><th>{{name}} price</th><th>×</th><th>Units</th><th>Profit</th></tr></thead><tbody id="rows"></tbody></table></div>
+</main>
+<script>
+const KEY="{{key}}",POLL={{tick_ms}};let last=0,series=[],liveFollow=true,cursor=0;
+const $=id=>document.getElementById(id),f=(x,d=2)=>Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+function draw(){
+  const c=$('chart'),dpr=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;c.width=w*dpr;c.height=h*dpr;
+  const g=c.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,w,h);
+  const st=getComputedStyle(document.body);g.font='11px system-ui';
+  if(series.length<2){g.fillStyle=st.getPropertyValue('--mut');g.fillText('Waiting for data…',10,20);return}
+  const visible=series.slice(Math.max(0,cursor-120),cursor),L=44,B=18,T=8,R=8,vals=visible.flatMap(t=>[t.chosen_price,t.moving_average_price]);
+  if(visible.length<2){g.fillStyle=st.getPropertyValue('--mut');g.fillText('Waiting for data…',10,20);return}
+  let lo=Math.min(...vals),hi=Math.max(...vals);const pad=(hi-lo)*.1||1;lo-=pad;hi+=pad;
+  const X=i=>L+i*(w-L-R)/(visible.length-1),Y=v=>T+(hi-v)*(h-T-B)/(hi-lo);
+  g.strokeStyle=st.getPropertyValue('--line');g.fillStyle=st.getPropertyValue('--mut');
+  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Y(v);g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();g.fillText(v.toFixed(1),4,y+4)}
+  [['chosen_price','#2563eb',2.2],['moving_average_price','#16a34a',2]].forEach(([key,color,width])=>{
+    g.beginPath();g.strokeStyle=color;g.lineWidth=width;visible.forEach((t,i)=>i?g.lineTo(X(i),Y(t[key])):g.moveTo(X(i),Y(t[key])));g.stroke();
+  });
+}
+function render(t){
+  $('price').innerHTML='$'+f(t.chosen_price);$('drug').textContent=t.drug_name+' · '+t.category;
+  $('mult').textContent='×'+f(t.price_multiplier,3);
+  $('average').textContent='$'+f(t.average_price);
+  $('profit').innerHTML='<span class="'+(t.profit>=0?'pos':'neg')+'">'+(t.profit>=0?'+':'')+'$'+f(t.profit)+'</span>';
+  $('cum').textContent='$'+f(t.cum_profit,0);
+}
+function rows(ts){const b=$('rows');ts.forEach(t=>{if(document.querySelector('tr[data-id="'+t.id+'"]'))return;const tr=document.createElement('tr');tr.dataset.id=t.id;
+  tr.innerHTML=`<td>${t.date}</td><td>${t.drug_name}</td><td>${t.category}</td><td><b>$${f(t.chosen_price)}</b></td><td>${f(t.price_multiplier,3)}</td><td>${f(t.realized_units,1)}</td><td class="${t.profit>=0?'pos':'neg'}">${f(t.profit)}</td>`;
+  b.prepend(tr);while(b.children.length>15)b.lastChild.remove()})}
+let polling=false;
+async function poll(){
+  if(polling)return;
+  polling=true;
+  try{const r=await fetch(`/api/${KEY}/ticks?after=${last}`),d=await r.json();
+    if(d.ticks.length){last=d.ticks[d.ticks.length-1].id;series=series.concat(d.ticks);rows(d.ticks);if(liveFollow){cursor=series.length;render(d.ticks[d.ticks.length-1])}draw();$('timeline').max=Math.max(1,series.length);if(liveFollow)$('timeline').value=series.length}
+    $('avg').textContent='avg profit $'+f(d.avg_profit)+' / decision · '+d.count+' decisions';
+    $('dot').className='dot'+(d.paused?' off':'');$('status').textContent=d.paused?'paused':'live';$('pause').textContent=d.paused?'Resume':'Pause';
+  }catch(e){$('dot').className='dot off';$('status').textContent='disconnected – retrying'}
+  finally{polling=false}
+}
+async function loadItems(){
+  const r=await fetch(`/api/${KEY}/items`),d=await r.json();
+  if(!r.ok)throw new Error(d.detail||d.error);
+  const select=$('item');select.replaceChildren(...d.items.map(item=>{const option=document.createElement('option');option.value=item;option.textContent=item;option.selected=item===d.selected;return option}));
+}
+async function loadHistory(){
+  const r=await fetch(`/api/${KEY}/history`),d=await r.json();
+  if(!r.ok)throw new Error(d.detail||d.error);
+  series=d.history||[];cursor=series.length;$('timeline').max=Math.max(1,series.length);$('timeline').value=cursor;
+  if(series.length)render(series[series.length-1]);draw();
+}
+$('timeline').oninput=e=>{liveFollow=false;cursor=Number(e.target.value);$('liveView').textContent='Follow live';if(series[cursor-1])render(series[cursor-1]);draw()};
+$('liveView').onclick=()=>{liveFollow=true;cursor=series.length;$('timeline').value=cursor;$('liveView').textContent='Live';if(series.length)render(series[series.length-1]);draw()};
+$('item').onchange=async e=>{
+  const r=await fetch(`/api/${KEY}/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:e.target.value})});
+  if(!r.ok){const d=await r.json();alert(d.error||'Unable to select product');return}
+  last=0;series=[];cursor=0;liveFollow=true;$('rows').replaceChildren();await loadHistory();poll();
+};
+$('pause').onclick=()=>fetch(`/api/${KEY}/pause`,{method:'POST'}).then(poll);
+addEventListener('resize',draw);loadItems().then(loadHistory).then(poll).catch(e=>{$('status').textContent='unavailable';console.error(e)});setInterval(poll,POLL);
+</script></body></html>

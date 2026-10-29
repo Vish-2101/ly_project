@@ -9,7 +9,7 @@ from stable_baselines3.common.callbacks import EvalCallback
 
 def make_env():
     return DynamicPricingEnv(
-        data_path="data/dynamic_pricing_noisy.xlsx",
+        data_path="deterministic_pricing_dataset.csv",
         config=EnvConfig(
             max_steps=200,
             episode_mode="random",
@@ -89,4 +89,4 @@ model.learn(
 model.save("sac_dynamic_pricing")
 env.save("sac_vecnormalize.pkl")   # 🔥 VERY IMPORTANT
 
-print("✅ SAC training complete!")
+print("SAC training complete!")

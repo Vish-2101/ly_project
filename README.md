@@ -13,8 +13,7 @@ A baseline model and random action simulations (`main.py`) are also included for
 ```
 ├── README.md                           # Project Documentation
 ├── requirements.txt                    # Python dependencies
-├── data/                               # Dataset directory
-│   └── dynamic_pricing.csv.xlsx        # Price and market data
+├── deterministic_pricing_dataset.csv   # Deterministic price and market data
 ├── env/                                # Custom Environment
 │   └── dynamic_pricing_env.py          # Gym environment for the simulation
 ├── baseline_model.py                   # Baseline static pricing model
@@ -26,6 +25,30 @@ A baseline model and random action simulations (`main.py`) are also included for
 ├── comparision.ipynb                   # Notebook comparing different approaches
 └── model_compare.ipynb                 # Notebook comparing different approaches
 ```
+
+## Live Dashboard
+
+The Flask dashboard uses `deterministic_pricing_dataset.csv` by default and
+provides one page per model:
+
+```bash
+python live_app.py
+```
+
+Open `http://localhost:5000/ppo`, `http://localhost:5000/sac`, or
+`http://localhost:5000/a2c`. The dataset is an Excel workbook distributed with
+a `.csv` filename; the application detects and loads it correctly. The live
+dashboard requires the corresponding trained model and `VecNormalize` artifacts;
+it never substitutes a demo or heuristic policy. Select a product from the
+dashboard dropdown to keep predictions focused on that product; the chart also
+shows a moving-average price to smooth record-to-record variation. The app
+persists each model/product cursor and last date/price in `.live_state.json`,
+so switching products or restarting the app resumes from the previous record.
+Prediction history is persisted in `.live_history.json`; use the chart's
+history slider to browse earlier trends, or press `Live` to follow new ticks.
+
+Set `DATA_PATH` to use another compatible dataset, or `PORT` and `TICK_SECONDS`
+to change the server port and update interval.
 
 ## 🛠 Prerequisites
 

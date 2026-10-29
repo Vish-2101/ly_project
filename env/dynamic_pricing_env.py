@@ -151,7 +151,12 @@ class DynamicPricingEnv(gym.Env):
         data_path: str
     ) -> pd.DataFrame:
 
-        df = pd.read_excel(data_path)
+        try:
+            df = pd.read_csv(data_path)
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            # The deterministic dataset is an Excel workbook distributed with
+            # a .csv filename, so fall back to the workbook reader when needed.
+            df = pd.read_excel(data_path)
 
         required_columns = {
             "date",

@@ -7,3 +7,5 @@ torch
 seaborn
 scikit-learn
 tqdm
+flask
+openpyxl
