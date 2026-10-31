@@ -15,12 +15,14 @@ demo or heuristic policy.
 """
 import os
 import json
+import math
 import threading
 import time
 from collections import deque
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from flask import Flask, jsonify, render_template, request, redirect
 
 TICK_SECONDS = float(os.environ.get("TICK_SECONDS", 1.0))
@@ -102,6 +104,16 @@ def _save_history(history):
         temporary.replace(HISTORY_PATH)
 
 
+def _catalog_records(state):
+    catalog = state.get("catalog", {})
+    return catalog if isinstance(catalog, dict) else {}
+
+
+def _removed_items(state):
+    removed = state.get("removed_items", [])
+    return set(removed) if isinstance(removed, list) else set()
+
+
 # ------------------------------------------------------------------ real runner
 class RealRunner:
     mode = "live"
@@ -126,14 +138,76 @@ class RealRunner:
         self.model = {"PPO": PPO, "SAC": SAC, "A2C": A2C}[cfg["cls"]].load(
             str(_resolve_path(cfg["model"]))
         )
+        saved_state = saved_state or {}
+        item_state = saved_state.get("items", saved_state)
+        self.catalog = _catalog_records(saved_state)
         self.items = sorted(self.base_env.df["drug_name"].unique().tolist())
+        self._apply_catalog(saved_state)
         self.selected_item = self.items[0]
         self.item_positions = {
-            item: int((saved_state or {}).get(item, {}).get("position", 0))
+            item: int(item_state.get(item, {}).get("position", 0))
             for item in self.items
         }
-        self.last_values = dict(saved_state or {})
+        self.last_values = dict(item_state)
         self._select_item(self.selected_item)
+
+    def _apply_catalog(self, saved_state):
+        catalog = _catalog_records(saved_state)
+        removed = _removed_items(saved_state)
+        for item, details in catalog.items():
+            if item in removed or item in self.items:
+                continue
+            self._append_catalog_item(item, details)
+            if details["product_type"] not in self.base_env.category_to_id:
+                self.base_env.category_to_id[details["product_type"]] = (
+                    len(self.base_env.category_to_id)
+                )
+            self.items.append(item)
+        self.items = sorted(item for item in self.items if item not in removed)
+        if not self.items:
+            raise ValueError("At least one product must remain")
+
+    def _append_catalog_item(self, item, details):
+        source_rows = self.base_env.df.drop_duplicates("date").copy()
+        source_rows = source_rows.sort_values("date").reset_index(drop=True)
+        demand = source_rows["demand_index"].astype(float)
+        demand_range = max(float(demand.max() - demand.min()), 1e-8)
+        demand_signal = (demand - demand.min()) / demand_range - 0.5
+        reference_prices = details["starting_price"] * (1.0 + 0.2 * demand_signal)
+        source_rows["drug_name"] = item
+        source_rows["category"] = details["product_type"]
+        source_rows["base_cost_usd"] = details["cp"]
+        source_rows["final_price_usd"] = details["sp"]
+        source_rows["reference_price"] = reference_prices
+        source_rows["competitor_price_usd"] = details["mp"]
+        source_rows["landed_cost_usd"] = (
+            details["cp"] + source_rows["shipping_cost_usd"].astype(float)
+        ) * (1.0 + source_rows["import_tax_percent"].astype(float) / 100.0)
+        source_rows["competitor_gap"] = (
+            details["mp"] - reference_prices
+        ) / (reference_prices + 1e-8)
+        self.base_env.df = pd.concat(
+            [self.base_env.df, source_rows],
+            ignore_index=True,
+        )
+
+    def add_item(self, details):
+        item = details["product_name"]
+        if item in self.items:
+            raise ValueError(f"Product already exists: {item}")
+        self.catalog[item] = details
+        self._apply_catalog({"catalog": {item: details}})
+        self.item_positions[item] = 0
+
+    def remove_item(self, item):
+        if item not in self.items:
+            raise ValueError(f"Unknown item: {item}")
+        if len(self.items) == 1:
+            raise ValueError("At least one product must remain")
+        self.items.remove(item)
+        self.item_positions.pop(item, None)
+        if self.selected_item == item:
+            self._select_item(self.items[0])
 
     def _select_item(self, item):
         if item not in self.items:
@@ -157,6 +231,17 @@ class RealRunner:
         self._select_item(self.selected_item)
 
     def step(self):
+        if self.selected_item in self.catalog:
+            if len(self.base_env.episode_indices) <= 1:
+                details = self.catalog[self.selected_item]
+                self.base_env.df = self.base_env.df[
+                    self.base_env.df["drug_name"] != self.selected_item
+                ].reset_index(drop=True)
+                self.items.remove(self.selected_item)
+                self._append_catalog_item(self.selected_item, details)
+                self.items.append(self.selected_item)
+                self.items.sort()
+                self._select_item(self.selected_item)
         if self.base_env.current_idx >= len(self.base_env.episode_indices):
             self.item_positions[self.selected_item] = 0
             self.reset_selected_item()
@@ -190,7 +275,7 @@ class Stream:
                 resolved = _resolve_path(f)
                 if not resolved.exists():
                     raise FileNotFoundError(str(resolved))
-            self.runner = RealRunner(cfg, self.model_state.get("items"))
+            self.runner = RealRunner(cfg, self.state)
             saved_item = self.model_state.get("selected_item")
             if saved_item in self.runner.items:
                 self.runner.select_item(saved_item)
@@ -203,6 +288,29 @@ class Stream:
             self.runner = None
             self.error = f"{type(e).__name__}: {e}"
         threading.Thread(target=self._loop, daemon=True).start()
+
+    def add_item(self, details):
+        with self.lock:
+            self.runner.add_item(details)
+            item = details["product_name"]
+            self.price_history[item] = deque(maxlen=20)
+            self.price_totals[item] = 0.0
+            self.price_counts[item] = 0
+            _save_state(self.state)
+
+    def remove_item(self, item):
+        with self.lock:
+            if self.runner is None:
+                raise ValueError("model unavailable")
+            self.runner.remove_item(item)
+            self.price_history.pop(item, None)
+            self.price_totals.pop(item, None)
+            self.price_counts.pop(item, None)
+            self.model_history.pop(item, None)
+            self.selected_item = self.runner.selected_item
+            self.model_state["selected_item"] = self.selected_item
+            _save_state(self.state)
+            _save_history(self.history)
 
     def _loop(self):
         while True:
@@ -278,7 +386,90 @@ def items(key):
         items=s.runner.items,
         selected=s.selected_item,
         last=saved.get(s.selected_item),
+        catalog=_catalog_records(s.state),
     )
+
+
+def _read_item_payload():
+    payload = request.get_json(silent=True) or {}
+    required_text = ("product_name", "company", "product_type")
+    if any(not isinstance(payload.get(field), str) or not payload[field].strip()
+           for field in required_text):
+        raise ValueError("product_name, company, and product_type are required")
+    details = {
+        "product_name": payload["product_name"].strip(),
+        "company": payload["company"].strip(),
+        "product_type": payload["product_type"].strip(),
+    }
+    for field in ("cp", "sp", "mp", "starting_price"):
+        try:
+            value = float(payload[field])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(f"{field} must be a number") from None
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{field} must be a non-negative number")
+        details[field] = value
+    return details
+
+
+@app.route("/api/<key>/items", methods=["POST"])
+def add_item(key):
+    if key not in streams:
+        return jsonify(error="unknown model"), 404
+    try:
+        details = _read_item_payload()
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    state = _load_state()
+    catalog = _catalog_records(state)
+    if details["product_name"] in catalog or any(
+        details["product_name"] in stream.runner.items
+        for stream in streams.values()
+        if stream.runner is not None
+    ):
+        return jsonify(error="product already exists"), 409
+    catalog[details["product_name"]] = details
+    state["catalog"] = catalog
+    state.setdefault("removed_items", [])
+    _save_state(state)
+    try:
+        for stream in streams.values():
+            if stream.runner is not None:
+                stream.state = state
+                stream.model_state = stream.state.setdefault(stream.key, {})
+                stream.add_item(details)
+    except (ValueError, KeyError, TypeError) as e:
+        return jsonify(error=f"unable to add product: {e}"), 400
+    return jsonify(item=details["product_name"], catalog=details), 201
+
+
+@app.route("/api/<key>/items/<path:item>", methods=["DELETE"])
+def remove_item(key, item):
+    if key not in streams:
+        return jsonify(error="unknown model"), 404
+    state = _load_state()
+    existing = set()
+    for stream in streams.values():
+        if stream.runner is not None:
+            existing.update(stream.runner.items)
+    if item not in existing:
+        return jsonify(error=f"unknown item: {item}"), 404
+    if len(existing) == 1:
+        return jsonify(error="At least one product must remain"), 400
+    state.setdefault("removed_items", [])
+    if item not in state["removed_items"]:
+        state["removed_items"].append(item)
+    state.get("catalog", {}).pop(item, None)
+    _save_state(state)
+    try:
+        for stream in streams.values():
+            if stream.runner is not None and item in stream.runner.items:
+                stream.state = state
+                stream.model_state = stream.state.setdefault(stream.key, {})
+                stream.remove_item(item)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(removed=item)
 
 
 @app.route("/api/<key>/select", methods=["POST"])

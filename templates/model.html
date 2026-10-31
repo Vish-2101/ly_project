@@ -23,7 +23,10 @@ main{max-width:1100px;margin:0 auto;padding:18px}
 canvas{width:100%;height:260px;display:block}
 .row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}.danger{color:var(--bad)}
 select{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:inherit}
+dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:20px;max-width:480px;width:calc(100% - 32px)}dialog::backdrop{background:#0008}
+dialog form{display:grid;gap:10px}dialog label{display:grid;gap:4px;color:var(--mut);font-size:13px}dialog input{background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:8px;font:inherit}
 .legend span{margin-right:14px;color:var(--mut);font-size:13px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px}
 .tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13.5px}
 th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -53,6 +56,8 @@ th{color:var(--mut);font-weight:600;font-size:12px}tbody tr:first-child{backgrou
     <div>
       <label for="item">Product </label>
       <select id="item"><option>Loading…</option></select>
+      <button id="addItem" class="primary" type="button">Add new item</button>
+      <button id="removeItem" class="danger" type="button">Remove</button>
     </div>
     <div class="legend"><span><i style="background:#2563eb"></i>Model price</span><span><i style="background:#16a34a"></i>Moving average</span></div>
   <button id="pause">Pause</button></div>
@@ -61,6 +66,21 @@ th{color:var(--mut);font-weight:600;font-size:12px}tbody tr:first-child{backgrou
 </div>
 <div class="card tw"><table><thead><tr><th>Date</th><th>Drug</th><th>Category</th><th>{{name}} price</th><th>×</th><th>Units</th><th>Profit</th></tr></thead><tbody id="rows"></tbody></table></div>
 </main>
+<dialog id="itemDialog">
+  <form id="itemForm">
+    <h3 style="margin:0">Add new product</h3>
+    <label>Product name<input name="product_name" required></label>
+    <label>Company<input name="company" required></label>
+    <label>Type of product<input name="product_type" required></label>
+    <label>CP (cost price)<input name="cp" type="number" min="0" step="0.01" required></label>
+    <label>SP (selling price)<input name="sp" type="number" min="0" step="0.01" required></label>
+    <label>MP (market price)<input name="mp" type="number" min="0" step="0.01" required></label>
+    <label>Starting price<input name="starting_price" type="number" min="0" step="0.01" required></label>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button id="cancelItem" type="button">Cancel</button><button class="primary" type="submit">Add item</button>
+    </div>
+  </form>
+</dialog>
 <script>
 const KEY="{{key}}",POLL={{tick_ms}};let last=0,series=[],liveFollow=true,cursor=0;
 const $=id=>document.getElementById(id),f=(x,d=2)=>Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
@@ -103,8 +123,9 @@ async function poll(){
 async function loadItems(){
   const r=await fetch(`/api/${KEY}/items`),d=await r.json();
   if(!r.ok)throw new Error(d.detail||d.error);
-  const select=$('item');select.replaceChildren(...d.items.map(item=>{const option=document.createElement('option');option.value=item;option.textContent=item;option.selected=item===d.selected;return option}));
+  const select=$('item');select.replaceChildren(...d.items.map(item=>{const option=document.createElement('option');option.value=item;option.textContent=d.catalog[item]?`${item} · ${d.catalog[item].company}`:item;option.selected=item===d.selected;return option}));
 }
+function resetStream(){last=0;series=[];cursor=0;liveFollow=true;$('rows').replaceChildren();loadHistory().then(poll)}
 async function loadHistory(){
   const r=await fetch(`/api/${KEY}/history`),d=await r.json();
   if(!r.ok)throw new Error(d.detail||d.error);
@@ -116,8 +137,28 @@ $('liveView').onclick=()=>{liveFollow=true;cursor=series.length;$('timeline').va
 $('item').onchange=async e=>{
   const r=await fetch(`/api/${KEY}/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:e.target.value})});
   if(!r.ok){const d=await r.json();alert(d.error||'Unable to select product');return}
-  last=0;series=[];cursor=0;liveFollow=true;$('rows').replaceChildren();await loadHistory();poll();
+  resetStream();
 };
 $('pause').onclick=()=>fetch(`/api/${KEY}/pause`,{method:'POST'}).then(poll);
+$('addItem').onclick=()=>$('itemDialog').showModal();
+$('cancelItem').onclick=()=>$('itemDialog').close();
+$('itemForm').onsubmit=async e=>{
+  e.preventDefault();
+  const payload=Object.fromEntries(new FormData(e.target).entries());
+  const r=await fetch(`/api/${KEY}/items`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d=await r.json();
+  if(!r.ok){alert(d.error||'Unable to add product');return}
+  e.target.reset();$('itemDialog').close();await loadItems();
+  $('item').value=d.item;
+  await fetch(`/api/${KEY}/select`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item:d.item})});
+  resetStream();
+};
+$('removeItem').onclick=async()=>{
+  const item=$('item').value;
+  if(!item||!confirm(`Remove ${item}?`))return;
+  const r=await fetch(`/api/${KEY}/items/${encodeURIComponent(item)}`,{method:'DELETE'}),d=await r.json();
+  if(!r.ok){alert(d.error||'Unable to remove product');return}
+  await loadItems();resetStream();
+};
 addEventListener('resize',draw);loadItems().then(loadHistory).then(poll).catch(e=>{$('status').textContent='unavailable';console.error(e)});setInterval(poll,POLL);
 </script></body></html>

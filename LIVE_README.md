@@ -26,3 +26,10 @@ price are persisted in `.live_state.json`, so restarting the app resumes from
 the previous dataset record. Historical predictions are stored in
 `.live_history.json`; use the chart history slider to browse earlier trends,
 then press `Live` to follow new ticks again.
+
+Use **Add new item** on a model page to persist a product in `.live_state.json`.
+The form stores the company and product type plus CP (cost price), SP (selling
+price), MP (market price), and starting price. CP, MP, and starting price feed
+the live pricing environment; the starting price is the initial reference
+price. Products can be removed with **Remove**; at least one product must
+remain.
